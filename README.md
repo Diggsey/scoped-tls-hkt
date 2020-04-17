@@ -1,5 +1,5 @@
 # scoped-tls-hkt
-![CI](https://github.com/Diggsey/scoped-tls-hkt/workflows/CI/badge.svg)
+[![CI](https://github.com/Diggsey/scoped-tls-hkt/workflows/CI/badge.svg)](https://github.com/Diggsey/scoped-tls-hkt/actions)
 
 [Documentation](https://docs.rs/scoped-tls-hkt)
 
