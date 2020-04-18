@@ -211,6 +211,7 @@ define_copy_reborrow! {
 macro_rules! scoped_thread_local {
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $(#[$tattrs:meta])* for<$lt:lifetime> $ty:ty) => (
         $(#[$tattrs])*
+        #[allow(non_camel_case_types)]
         $vis struct $name<$lt> where ::std::cell::Cell<::std::option::Option<$ty>>: 'static {
             inner: &$lt ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<$ty>>>,
         }
@@ -286,6 +287,7 @@ macro_rules! scoped_thread_local {
     );
     ($(#[$attrs:meta])* $vis:vis static mut $name:ident: $(#[$tattrs:meta])* for<$lt:lifetime> $ty:ty) => (
         $(#[$tattrs])*
+        #[allow(non_camel_case_types)]
         $vis struct $name<$lt> where ::std::cell::Cell<::std::option::Option<$ty>>: 'static {
             inner: &$lt ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<$ty>>>,
         }
