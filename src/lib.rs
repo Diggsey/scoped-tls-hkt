@@ -148,14 +148,14 @@ pub trait ReborrowMut<'a> {
     fn reborrow_mut(&'a mut self) -> Self::Result;
 }
 
-impl<'a, 'b: 'a, T> ReborrowMut<'a> for &'b mut T {
+impl<'a, 'b: 'a, T: ?Sized> ReborrowMut<'a> for &'b mut T {
     type Result = &'a mut T;
     fn reborrow_mut(&'a mut self) -> Self::Result {
         &mut **self
     }
 }
 
-impl<'a, 'b: 'a, T> ReborrowMut<'a> for &'b T {
+impl<'a, 'b: 'a, T: ?Sized> ReborrowMut<'a> for &'b T {
     type Result = &'a T;
     fn reborrow_mut(&'a mut self) -> Self::Result {
         &**self
@@ -826,5 +826,51 @@ mod tests {
         assert!(!BAR.is_set());
         assert_eq!(x, 3);
         assert_eq!(y, 4.0);
+    }
+
+    #[test]
+    fn hkt_mut_trait() {
+        scoped_thread_local!(static mut BAR: for<'a> (&'a mut (dyn std::fmt::Display + 'static), &'a mut dyn std::any::Any));
+
+        assert!(!BAR.is_set());
+        let mut x = "Hello";
+        let mut y = 42;
+        BAR.set((&mut x, &mut y), || {
+            assert!(BAR.is_set());
+            BAR.with(|(u, _)| {
+                assert_eq!(u.to_string(), "Hello");
+            });
+        });
+        assert!(!BAR.is_set());
+    }
+
+    #[test]
+    fn hkt_mut_newtype() {
+        struct Foo<'a> {
+            x: &'a mut (dyn std::fmt::Display + 'a),
+            y: i32,
+        }
+
+        impl<'a, 'b> crate::ReborrowMut<'a> for Foo<'b> {
+            type Result = Foo<'a>;
+            fn reborrow_mut(&'a mut self) -> Self::Result {
+                Foo {
+                    x: self.x,
+                    y: self.y,
+                }
+            }
+        }
+
+        scoped_thread_local!(static mut BAR: for<'a> Foo<'a>);
+
+        assert!(!BAR.is_set());
+        let mut x = "Hello";
+        BAR.set(Foo { x: &mut x, y: 1 }, || {
+            assert!(BAR.is_set());
+            BAR.with(|foo| {
+                assert_eq!(foo.x.to_string(), "Hello");
+            });
+        });
+        assert!(!BAR.is_set());
     }
 }
