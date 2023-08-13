@@ -317,9 +317,9 @@ macro_rules! scoped_thread_local {
 
                 // This wrapper helps to ensure that the 'static lifetime is not visible
                 // to the safe code.
-                fn cast_from_static<'a, 'b>(x: &'a mut Hkt<'_>) -> Hkt<'b> where 'a: 'b {
+                fn cast_from_static<'is_reborrow_mut_general_enough, 'a, 'b>(x: &'a mut Hkt<'is_reborrow_mut_general_enough>) -> Hkt<'b> where 'a: 'b {
                     //let y: &'b mut Hkt<'_> = unsafe { std::mem::transmute(x) };
-                    ReborrowMut::reborrow_mut(x)
+                    <Hkt<'is_reborrow_mut_general_enough> as ReborrowMut<'_>>::reborrow_mut(x)
                 }
 
                 impl $name<'static> {
