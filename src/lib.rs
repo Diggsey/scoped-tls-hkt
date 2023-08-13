@@ -169,6 +169,7 @@ macro_rules! define_tuple_reborrow {
             $($t: ReborrowMut<'a> + 'a),*
         {
             type Result = ($($t::Result,)*);
+            #[allow(clippy::unused_unit)]
             fn reborrow_mut(&'a mut self) -> Self::Result {
                 #[allow(non_snake_case)]
                 let ($($t,)*) = self;
@@ -317,7 +318,8 @@ macro_rules! scoped_thread_local {
                 // This wrapper helps to ensure that the 'static lifetime is not visible
                 // to the safe code.
                 fn cast_from_static<'a, 'b>(x: &'a mut Hkt<'static>) -> Hkt<'b> where 'a: 'b {
-                    ReborrowMut::reborrow_mut(x)
+                    let y: &'a mut Hkt<'a> = unsafe { std::mem::transmute(x) };
+                    ReborrowMut::reborrow_mut(y)
                 }
 
                 impl $name<'static> {
@@ -427,7 +429,7 @@ fn cast_from_static<'a, 'b, T: ?Sized + 'static>(x: &'a &T) -> &'b T
 where
     'a: 'b,
 {
-    *x
+    x
 }
 
 impl<T: ?Sized + 'static> ScopedKey<T> {
@@ -557,7 +559,7 @@ fn cast_from_static_mut<'a, 'b, T: ?Sized + 'static>(x: &'a mut &mut T) -> &'b m
 where
     'a: 'b,
 {
-    *x
+    x
 }
 
 impl<T: ?Sized + 'static> ScopedKeyMut<T> {
