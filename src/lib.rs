@@ -216,73 +216,77 @@ macro_rules! scoped_thread_local {
         $vis struct $name<$lt> where ::std::cell::Cell<::std::option::Option<$ty>>: 'static {
             inner: &$lt ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<$ty>>>,
         }
+        const _:() = {
+            type Hkt<$lt> = $ty;
+            use ::std::cell::Cell;
+            use ::std::option::Option;
+            use ::std::marker::Sync;
+            use ::std::ops::{FnOnce, Drop};
+            use ::std::thread::LocalKey;
+
+            unsafe impl Sync for $name<'static> {}
+
+            unsafe fn cast_to_static(x: Hkt<'_>) -> Hkt<'static> {
+                std::mem::transmute(x)
+            }
+
+            // This wrapper helps to ensure that the 'static lifetime is not visible
+            // to the safe code.
+            fn cast_from_static<'a, 'b>(x: &'a Hkt<'static>) -> Hkt<'b> where 'a: 'b {
+                *x
+            }
+
+            impl $name<'static> {
+                pub fn set<F, R>(&'static self, t: Hkt<'_>, f: F) -> R
+                    where F: FnOnce() -> R
+                {
+                    struct Reset {
+                        key: &'static LocalKey<Cell<Option<Hkt<'static>>>>,
+                        val: Option<Hkt<'static>>,
+                    }
+                    impl Drop for Reset {
+                        fn drop(&mut self) {
+                            self.key.with(|c| c.set(self.val.take()));
+                        }
+                    }
+                    let prev = self.inner.with(|c| {
+                        // Safety: we are only changing the lifetime. We enforce the
+                        // lifetime constraints via the `Reset` struct.
+                        c.replace(Some(unsafe { cast_to_static(t) }))
+                    });
+                    let _reset = Reset { key: self.inner, val: prev };
+                    f()
+                }
+
+                pub fn with<F, R>(&'static self, f: F) -> R
+                    where F: FnOnce(Hkt<'_>) -> R
+                {
+                    let val = self.inner.with(|c| c.get());
+                    let val = val.expect("cannot access a scoped thread local variable without calling `set` first");
+
+                    // This also asserts that Hkt is covariant
+                    f(cast_from_static(&val))
+                }
+
+                /// Test whether this TLS key has been `set` for the current thread.
+                pub fn is_set(&'static self) -> bool {
+                    self.inner.with(|c| c.get().is_some())
+                }
+            }
+        };
+
         $(#[$attrs])*
         $vis static $name: $name<'static> = {
             type Hkt<$lt> = $ty;
+            use ::std::cell::Cell;
+            use ::std::option::Option;
 
-            {
-                use ::std::cell::Cell;
-                use ::std::option::Option;
-                use ::std::marker::Sync;
-                use ::std::ops::{FnOnce, Drop};
-                use ::std::thread::LocalKey;
+            thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
+                Cell::new(None)
+            });
 
-                thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
-                    Cell::new(None)
-                });
-
-                unsafe impl Sync for $name<'static> {}
-
-                unsafe fn cast_to_static(x: Hkt<'_>) -> Hkt<'static> {
-                    std::mem::transmute(x)
-                }
-
-                // This wrapper helps to ensure that the 'static lifetime is not visible
-                // to the safe code.
-                fn cast_from_static<'a, 'b>(x: &'a Hkt<'static>) -> Hkt<'b> where 'a: 'b {
-                    *x
-                }
-
-                impl $name<'static> {
-                    pub fn set<F, R>(&'static self, t: Hkt<'_>, f: F) -> R
-                        where F: FnOnce() -> R
-                    {
-                        struct Reset {
-                            key: &'static LocalKey<Cell<Option<Hkt<'static>>>>,
-                            val: Option<Hkt<'static>>,
-                        }
-                        impl Drop for Reset {
-                            fn drop(&mut self) {
-                                self.key.with(|c| c.set(self.val.take()));
-                            }
-                        }
-                        let prev = self.inner.with(|c| {
-                            // Safety: we are only changing the lifetime. We enforce the
-                            // lifetime constraints via the `Reset` struct.
-                            c.replace(Some(unsafe { cast_to_static(t) }))
-                        });
-                        let _reset = Reset { key: self.inner, val: prev };
-                        f()
-                    }
-
-                    pub fn with<F, R>(&'static self, f: F) -> R
-                        where F: FnOnce(Hkt<'_>) -> R
-                    {
-                        let val = self.inner.with(|c| c.get());
-                        let val = val.expect("cannot access a scoped thread local variable without calling `set` first");
-
-                        // This also asserts that Hkt is covariant
-                        f(cast_from_static(&val))
-                    }
-
-                    /// Test whether this TLS key has been `set` for the current thread.
-                    pub fn is_set(&'static self) -> bool {
-                        self.inner.with(|c| c.get().is_some())
-                    }
-                }
-                $name {
-                    inner: &FOO,
-                }
+            $name {
+                inner: &FOO,
             }
         };
     );
@@ -292,92 +296,96 @@ macro_rules! scoped_thread_local {
         $vis struct $name<$lt> where ::std::cell::Cell<::std::option::Option<$ty>>: 'static {
             inner: &$lt ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<$ty>>>,
         }
+        const _:() = {
+            type Hkt<$lt> = $ty;
+
+            use ::std::cell::Cell;
+            use ::std::option::Option;
+            use ::std::marker::Sync;
+            use ::std::ops::{FnOnce, Drop};
+            use ::std::thread::LocalKey;
+
+            use $crate::ReborrowMut;
+
+            unsafe impl Sync for $name<'static> {}
+
+            unsafe fn cast_to_static(x: Hkt<'_>) -> Hkt<'static> {
+                std::mem::transmute(x)
+            }
+
+            // This wrapper helps to ensure that the 'static lifetime is not visible
+            // to the safe code.
+            fn cast_from_static<'is_reborrow_mut_general_enough, 'a, 'b>(x: &'a mut Hkt<'is_reborrow_mut_general_enough>) -> Hkt<'b> where 'a: 'b {
+                //let y: &'b mut Hkt<'_> = unsafe { std::mem::transmute(x) };
+                <Hkt<'is_reborrow_mut_general_enough> as ReborrowMut<'_>>::reborrow_mut(x)
+            }
+
+            impl $name<'static> {
+                fn replace<F, R>(&'static self, value: Option<Hkt<'_>>, f: F) -> R
+                    where F: FnOnce(Option<Hkt<'_>>) -> R
+                {
+                    struct Reset {
+                        key: &'static LocalKey<Cell<Option<Hkt<'static>>>>,
+                        val: Option<Hkt<'static>>,
+                    }
+                    impl Drop for Reset {
+                        fn drop(&mut self) {
+                            self.key.with(|c| c.set(self.val.take()));
+                        }
+                    }
+                    let prev = self.inner.with(move |c| {
+                        // Safety: we are only changing the lifetime. We enforce the
+                        // lifetime constraints via the `Reset` struct.
+                        c.replace(value.map(|x| unsafe { cast_to_static(x) }))
+                    });
+                    let mut reset = Reset { key: self.inner, val: prev };
+                    f(reset.val.as_mut().map(cast_from_static))
+                }
+
+                /// Inserts a value into this scoped thread local storage slot for a
+                /// duration of a closure.
+                pub fn set<F, R>(&'static self, t: Hkt<'_>, f: F) -> R
+                    where F: FnOnce() -> R
+                {
+                    self.replace(Some(t), |_| f())
+                }
+
+                /// Gets a value out of this scoped variable.
+                ///
+                /// This function takes a closure which receives the value of this
+                /// variable. For the duration of the closure, the key will appear
+                /// unset.
+                ///
+                /// # Panics
+                ///
+                /// This function will panic if `set` has not previously been called,
+                /// or if the call is nested inside another (multiple mutable borrows
+                /// of the same value are not allowed).
+                ///
+                pub fn with<F, R>(&'static self, f: F) -> R
+                    where F: FnOnce(Hkt<'_>) -> R
+                {
+                    self.replace(None, |val| f(val.expect("cannot access a scoped thread local variable without calling `set` first")))
+                }
+
+                /// Test whether this TLS key has been `set` for the current thread.
+                pub fn is_set(&'static self) -> bool {
+                    self.replace(None, |prev| prev.is_some())
+                }
+
+            }
+        };
         $(#[$attrs])*
         $vis static $name: $name<'static> = {
             type Hkt<$lt> = $ty;
+            use ::std::cell::Cell;
+            use ::std::option::Option;
+            thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
+                Cell::new(None)
+            });
 
-            {
-                use ::std::cell::Cell;
-                use ::std::option::Option;
-                use ::std::marker::Sync;
-                use ::std::ops::{FnOnce, Drop};
-                use ::std::thread::LocalKey;
-
-                use $crate::ReborrowMut;
-
-                thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
-                    Cell::new(None)
-                });
-
-                unsafe impl Sync for $name<'static> {}
-
-                unsafe fn cast_to_static(x: Hkt<'_>) -> Hkt<'static> {
-                    std::mem::transmute(x)
-                }
-
-                // This wrapper helps to ensure that the 'static lifetime is not visible
-                // to the safe code.
-                fn cast_from_static<'is_reborrow_mut_general_enough, 'a, 'b>(x: &'a mut Hkt<'is_reborrow_mut_general_enough>) -> Hkt<'b> where 'a: 'b {
-                    //let y: &'b mut Hkt<'_> = unsafe { std::mem::transmute(x) };
-                    <Hkt<'is_reborrow_mut_general_enough> as ReborrowMut<'_>>::reborrow_mut(x)
-                }
-
-                impl $name<'static> {
-                    fn replace<F, R>(&'static self, value: Option<Hkt<'_>>, f: F) -> R
-                        where F: FnOnce(Option<Hkt<'_>>) -> R
-                    {
-                        struct Reset {
-                            key: &'static LocalKey<Cell<Option<Hkt<'static>>>>,
-                            val: Option<Hkt<'static>>,
-                        }
-                        impl Drop for Reset {
-                            fn drop(&mut self) {
-                                self.key.with(|c| c.set(self.val.take()));
-                            }
-                        }
-                        let prev = self.inner.with(move |c| {
-                            // Safety: we are only changing the lifetime. We enforce the
-                            // lifetime constraints via the `Reset` struct.
-                            c.replace(value.map(|x| unsafe { cast_to_static(x) }))
-                        });
-                        let mut reset = Reset { key: self.inner, val: prev };
-                        f(reset.val.as_mut().map(cast_from_static))
-                    }
-
-                    /// Inserts a value into this scoped thread local storage slot for a
-                    /// duration of a closure.
-                    pub fn set<F, R>(&'static self, t: Hkt<'_>, f: F) -> R
-                        where F: FnOnce() -> R
-                    {
-                        self.replace(Some(t), |_| f())
-                    }
-
-                    /// Gets a value out of this scoped variable.
-                    ///
-                    /// This function takes a closure which receives the value of this
-                    /// variable. For the duration of the closure, the key will appear
-                    /// unset.
-                    ///
-                    /// # Panics
-                    ///
-                    /// This function will panic if `set` has not previously been called,
-                    /// or if the call is nested inside another (multiple mutable borrows
-                    /// of the same value are not allowed).
-                    ///
-                    pub fn with<F, R>(&'static self, f: F) -> R
-                        where F: FnOnce(Hkt<'_>) -> R
-                    {
-                        self.replace(None, |val| f(val.expect("cannot access a scoped thread local variable without calling `set` first")))
-                    }
-
-                    /// Test whether this TLS key has been `set` for the current thread.
-                    pub fn is_set(&'static self) -> bool {
-                        self.replace(None, |prev| prev.is_some())
-                    }
-                }
-                $name {
-                    inner: &FOO,
-                }
+            $name {
+                inner: &FOO,
             }
         };
     );
