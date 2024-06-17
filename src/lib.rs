@@ -224,10 +224,6 @@ macro_rules! scoped_thread_local {
             use ::std::ops::{FnOnce, Drop};
             use ::std::thread::LocalKey;
 
-            thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
-                Cell::new(None)
-            });
-
             unsafe impl Sync for $name<'static> {}
 
             unsafe fn cast_to_static(x: Hkt<'_>) -> Hkt<'static> {
@@ -310,10 +306,6 @@ macro_rules! scoped_thread_local {
             use ::std::thread::LocalKey;
 
             use $crate::ReborrowMut;
-
-            thread_local!(static FOO: Cell<Option<Hkt<'static>>> = {
-                Cell::new(None)
-            });
 
             unsafe impl Sync for $name<'static> {}
 
