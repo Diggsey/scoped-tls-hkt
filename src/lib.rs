@@ -258,6 +258,7 @@ macro_rules! scoped_thread_local {
                     f()
                 }
 
+                #[track_caller]
                 pub fn with<F, R>(&'static self, f: F) -> R
                     where F: FnOnce(Hkt<'_>) -> R
                 {
@@ -362,6 +363,7 @@ macro_rules! scoped_thread_local {
                 /// or if the call is nested inside another (multiple mutable borrows
                 /// of the same value are not allowed).
                 ///
+                #[track_caller]
                 pub fn with<F, R>(&'static self, f: F) -> R
                     where F: FnOnce(Hkt<'_>) -> R
                 {
@@ -521,6 +523,7 @@ impl<T: ?Sized + 'static> ScopedKey<T> {
     /// });
     /// # }
     /// ```
+    #[track_caller]
     pub fn with<F, R>(&'static self, f: F) -> R
     where
         F: FnOnce(&T) -> R,
@@ -617,6 +620,7 @@ impl<T: ?Sized + 'static> ScopedKeyMut<T> {
     /// or if the call is nested inside another (multiple mutable borrows
     /// of the same value are not allowed).
     ///
+    #[track_caller]
     pub fn with<F, R>(&'static self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
