@@ -367,7 +367,8 @@ macro_rules! scoped_thread_local {
                 pub fn with<F, R>(&'static self, f: F) -> R
                     where F: FnOnce(Hkt<'_>) -> R
                 {
-                    self.replace(None, |val| f(val.expect("cannot access a scoped thread local variable without calling `set` first")))
+                    self.replace(None, |val| val.map(f))
+                        .expect("cannot access a scoped thread local variable without calling `set` first")
                 }
 
                 /// Test whether this TLS key has been `set` for the current thread.
@@ -625,10 +626,8 @@ impl<T: ?Sized + 'static> ScopedKeyMut<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        self.replace(None, |val| {
-            f(val
-                .expect("cannot access a scoped thread local variable without calling `set` first"))
-        })
+        self.replace(None, |val| val.map(f))
+            .expect("cannot access a scoped thread local variable without calling `set` first")
     }
 
     /// Test whether this TLS key has been `set` for the current thread.
@@ -641,7 +640,9 @@ impl<T: ?Sized + 'static> ScopedKeyMut<T> {
 mod tests {
     use std::cell::Cell;
     use std::panic;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{channel, Sender};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     scoped_thread_local!(static FOO: u32);
@@ -699,6 +700,7 @@ mod tests {
 
         // Temporarily suppress panic output, as it would interfere
         // with the test harness output.
+        let lock = PanicHookLock::acquire();
         let prev_hook = panic::take_hook();
         panic::set_hook(Box::new(|_| {
             // Do nothing
@@ -714,9 +716,100 @@ mod tests {
 
         let res = t.join();
         panic::set_hook(prev_hook);
+        drop(lock);
 
         assert_eq!(rx.recv().unwrap(), 1);
         assert!(res.is_err());
+    }
+
+    /// Serializes tests that replace the process-wide panic hook.
+    static PANIC_HOOK_LOCKED: AtomicBool = AtomicBool::new(false);
+
+    struct PanicHookLock;
+
+    impl PanicHookLock {
+        fn acquire() -> Self {
+            while PANIC_HOOK_LOCKED
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                thread::yield_now();
+            }
+            PanicHookLock
+        }
+    }
+
+    impl Drop for PanicHookLock {
+        fn drop(&mut self) {
+            PANIC_HOOK_LOCKED.store(false, Ordering::Release);
+        }
+    }
+
+    /// Runs `f`, which must panic, and returns the file and line the panic
+    /// was reported at.
+    fn panic_location<F: FnOnce()>(f: F) -> (String, u32) {
+        let location = Arc::new(Mutex::new(None));
+        let lock = PanicHookLock::acquire();
+        let prev_hook = panic::take_hook();
+        {
+            let location = location.clone();
+            panic::set_hook(Box::new(move |info| {
+                *location.lock().unwrap() =
+                    info.location().map(|l| (l.file().to_string(), l.line()));
+            }));
+        }
+        let res = panic::catch_unwind(panic::AssertUnwindSafe(f));
+        panic::set_hook(prev_hook);
+        drop(lock);
+
+        assert!(res.is_err(), "expected a panic");
+        let location = location.lock().unwrap().take();
+        location.expect("panic hook did not record a location")
+    }
+
+    #[test]
+    fn with_panics_at_caller() {
+        scoped_thread_local!(static REF: u32);
+        scoped_thread_local!(static mut MUT: u32);
+        scoped_thread_local!(static HKT: for<'a> &'a u32);
+        scoped_thread_local!(static mut HKT_MUT: for<'a> &'a mut u32);
+        let here = |line| (file!().to_string(), line);
+
+        // Never set.
+        let (loc, line) = (panic_location(|| REF.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+        let (loc, line) = (panic_location(|| MUT.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+        let (loc, line) = (panic_location(|| HKT.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+        let (loc, line) = (panic_location(|| HKT_MUT.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+
+        // Set, then reset on leaving `set`.
+        REF.set(&1, || ());
+        assert!(!REF.is_set());
+        let (loc, line) = (panic_location(|| REF.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+        HKT.set(&1, || ());
+        assert!(!HKT.is_set());
+        let (loc, line) = (panic_location(|| HKT.with(|_| ())), line!());
+        assert_eq!(loc, here(line));
+
+        // Nested mutable borrow.
+        MUT.set(&mut 1, || {
+            MUT.with(|_| {
+                let (loc, line) = (panic_location(|| MUT.with(|_| ())), line!());
+                assert_eq!(loc, here(line));
+            })
+        });
+        assert!(!MUT.is_set());
+        HKT_MUT.set(&mut 1, || {
+            HKT_MUT.with(|_| {
+                let (loc, line) = (panic_location(|| HKT_MUT.with(|_| ())), line!());
+                assert_eq!(loc, here(line));
+            })
+        });
+        assert!(!HKT_MUT.is_set());
     }
 
     #[test]
