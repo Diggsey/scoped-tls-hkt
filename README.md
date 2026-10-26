@@ -17,7 +17,7 @@ features:
 scoped-tls-hkt = "0.1"
 ```
 
-The minimum supported Rust version is 1.46.
+The minimum supported Rust version is 1.59.
 
 # Scoped thread-local storage
 
